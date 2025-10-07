@@ -5,9 +5,21 @@ import path from 'path';
 import { pipeline } from 'stream/promises';
 
 import core from '@actions/core';
+import exec from '@actions/exec';
 import io from '@actions/io';
 import * as tc from '@actions/tool-cache';
 import { Octokit } from '@octokit/rest';
+
+import restoreCache from './cache-restore.js';
+
+/**
+ * Normalize version for tool-cache compatibility
+ * @param {string} version - Version string (e.g., "v0.50.0" or "0.50.0")
+ * @returns {string} - Normalized version without "v" prefix
+ */
+function normalizeVersion(version) {
+  return version.replace(/^v/, '');
+}
 
 /**
  * Get the GitHub platform architecture name
@@ -42,7 +54,6 @@ function getOctokit() {
 
 async function getTFLintVersion(inputVersion) {
   if (!inputVersion || inputVersion === 'latest') {
-    core.debug('Requesting for [latest] version ...');
     const octokit = getOctokit();
     const response = await octokit.repos.getLatestRelease({
       owner: 'terraform-linters',
@@ -63,8 +74,9 @@ async function fileSHA256(filePath) {
   return hash.digest('hex');
 }
 
-async function downloadCLI(url, checksums) {
-  core.debug(`Downloading tflint CLI from ${url}`);
+async function downloadCLI(url, checksums, version) {
+  core.info(`Attempting to download ${version}...`);
+  core.info(`Acquiring ${version} from ${url}`);
   const pathToCLIZip = await tc.downloadTool(url);
 
   if (checksums.length > 0) {
@@ -81,7 +93,7 @@ async function downloadCLI(url, checksums) {
     core.debug('SHA256 hash verified successfully');
   }
 
-  core.debug('Extracting tflint CLI zip file');
+  core.info('Extracting...');
   const pathToCLI = await tc.extractZip(pathToCLIZip);
   core.debug(`tflint CLI path is ${pathToCLI}.`);
 
@@ -113,26 +125,63 @@ async function installWrapper(pathToCLI) {
 
 async function run() {
   try {
+    await restoreCache();
+
     const inputVersion = core.getInput('tflint_version');
     const checksums = core.getMultilineInput('checksums');
     const wrapper = core.getInput('tflint_wrapper') === 'true';
     const version = await getTFLintVersion(inputVersion);
     const platform = mapOS(os.platform());
     const arch = mapArch(os.arch());
+    const normalizedVersion = normalizeVersion(version);
 
-    core.debug(`Getting download URL for tflint version ${version}: ${platform} ${arch}`);
-    const url = `https://github.com/terraform-linters/tflint/releases/download/${version}/tflint_${platform}_${arch}.zip`;
+    // Check if tool is already cached
+    let pathToCLI = tc.find('tflint', normalizedVersion, arch);
+    if (pathToCLI) {
+      core.info(`Found TFLint ${version} in cache @ ${pathToCLI}`);
+    } else {
+      core.debug(`Getting download URL for tflint version ${version}: ${platform} ${arch}`);
+      const url = `https://github.com/terraform-linters/tflint/releases/download/${version}/tflint_${platform}_${arch}.zip`;
 
-    const pathToCLI = await downloadCLI(url, checksums);
+      pathToCLI = await downloadCLI(url, checksums, version);
 
-    if (wrapper) {
-      await installWrapper(pathToCLI);
+      if (wrapper) {
+        await installWrapper(pathToCLI);
+      }
+
+      // Cache the tool for future runs
+      core.info('Adding to the tool cache...');
+      pathToCLI = await tc.cacheDir(pathToCLI, 'tflint', normalizedVersion, arch);
+      core.info(`Successfully cached TFLint to ${pathToCLI}`);
     }
 
     core.addPath(pathToCLI);
 
     const matchersPath = path.join(__dirname, '..', '.github', 'matchers.json');
     core.info(`##[add-matcher]${matchersPath}`);
+
+    // Get and output actual installed version
+    try {
+      let stdout = '';
+      await exec.exec('tflint', ['--version'], {
+        listeners: {
+          stdout: (data) => {
+            stdout += data.toString();
+          },
+        },
+      });
+
+      const firstLine = stdout.split('\n')[0];
+      const match = firstLine.match(/TFLint version (.+)/);
+      if (match) {
+        const installedVersion = match[1];
+        core.setOutput('tflint-version', installedVersion);
+      } else {
+        core.warning('Unable to parse tflint version from output');
+      }
+    } catch (error) {
+      core.warning(`Failed to get tflint version: ${error.message}`);
+    }
 
     return version;
   } catch (ex) {
