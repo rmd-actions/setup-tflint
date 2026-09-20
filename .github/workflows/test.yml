@@ -11,13 +11,13 @@ permissions:
 
 jobs:
   build:
-    name: Build checks
+    name: Build
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-    - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-    - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.npm
         key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
@@ -25,15 +25,24 @@ jobs:
           ${{ runner.os }}-node-
     - name: Install
       run: npm ci
-    - name: Build & Verify
-      run: npm run build && git diff --exit-code
+    - name: Build
+      run: npm run build
+    # Tar the bundle so the executable bit on the relocated wrapper survives.
+    # actions/upload-artifact does not preserve unix file permissions.
+    - name: Archive dist
+      run: tar -cf dist.tar dist
+    - name: Upload dist
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: dist
+        path: dist.tar
 
   lint:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-    - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-    - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
 
         path: ~/.npm
@@ -48,9 +57,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-    - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-    - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.npm
         key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
@@ -65,6 +74,7 @@ jobs:
 
   integration:
     name: Integration test
+    needs: build
 
     strategy:
       matrix:
@@ -75,7 +85,8 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: ./.github/actions/dist
     - name: Use Action
       uses: ./
       with:
@@ -85,13 +96,15 @@ jobs:
 
   integration-versions:
     name: 'Integration test: version (tflint_version: ${{ matrix.tflint_version }})'
+    needs: build
     runs-on: ubuntu-latest
     strategy:
       matrix:
         tflint_version: ['v0.24.1', latest]
 
     steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: ./.github/actions/dist
     - name: Use Action
       id: setup-tflint
       uses: ./
@@ -124,9 +137,11 @@ jobs:
   integration-checksum:
     runs-on: ubuntu-latest
     name: 'Integration test: checksum'
+    needs: build
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/dist
       - name: Use Action
         uses: ./
         with:
@@ -140,9 +155,11 @@ jobs:
   integration-version-file:
     runs-on: ubuntu-latest
     name: 'Integration test: version file'
+    needs: build
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/dist
       - name: Write version file
         run: |
           cat > .tool-versions <<'EOF'
@@ -166,13 +183,15 @@ jobs:
 
   integration-matchers:
     name: 'Integration test: matchers (tflint_version: ${{ matrix.tflint_version }})'
+    needs: build
     runs-on: ubuntu-latest
     strategy:
       matrix:
         tflint_version: ['v0.26.0', latest]
 
     steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: ./.github/actions/dist
     - name: Use Action
       uses: ./
       with:
@@ -183,13 +202,15 @@ jobs:
 
   integration-wrapper:
     name: 'Integration test: wrapper (tflint_version: ${{ matrix.tflint_version }})'
+    needs: build
     runs-on: ubuntu-latest
     strategy:
       matrix:
         tflint_version: [ 'v0.26.0', latest ]
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/dist
       - name: Use Action
         id: setup-tflint
         uses: ./
@@ -219,10 +240,12 @@ jobs:
 
   integration-cache:
     name: 'Integration test: cache'
+    needs: build
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/dist
       - name: Use Action
         uses: ./
         with:
